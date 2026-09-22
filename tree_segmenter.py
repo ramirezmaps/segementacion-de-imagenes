@@ -29,13 +29,14 @@ def remove_ground_plane(
     combined_bool: np.ndarray,
     depth_norm: np.ndarray,
     salient_alpha: np.ndarray,
+    image: Image.Image = None,
     ground_sensitivity: float = 0.5
 ) -> np.ndarray:
     """
     Filtra y elimina el suelo/terreno de la máscara de primer plano.
     
     El suelo suele caracterizarse por estar en la parte inferior de la imagen,
-    tener una pendiente suave de profundidad (gradiente vertical) y una baja puntuación
+    tener espectro de color de tierra/arena desértica o pasto plano y una baja puntuación
     de saliencia estructural en comparación con el árbol.
     """
     if ground_sensitivity <= 0.0 or not np.any(combined_bool):
@@ -44,23 +45,38 @@ def remove_ground_plane(
     height, width = combined_bool.shape
     clean_bool = combined_bool.copy()
     
-    # 1. Filtro por Saliencia del Suelo:
-    # El suelo cercano suele dar alta profundidad pero baja saliencia de objeto.
-    # Excluir píxeles donde la saliencia sea muy baja pero la profundidad alta si están en el tercio inferior
     salient_norm = salient_alpha / 255.0
     y_indices, _ = np.indices((height, width))
     y_norm = y_indices / float(height) # 0.0 arriba, 1.0 en la base
     
-    # Píxeles en la mitad/base inferior de la imagen donde la saliencia es baja (< umbral)
+    # 1. Filtro Espectral de Arena y Suelo Desértico/Tierra
+    if image is not None:
+        img_np = np.array(image.convert("RGB"), dtype=np.float32)
+        r, g, b = img_np[:, :, 0], img_np[:, :, 1], img_np[:, :, 2]
+        r_n, g_n, b_n = r / 255.0, g / 255.0, b / 255.0
+        cmax = np.maximum(r_n, np.maximum(g_n, b_n))
+        cmin = np.minimum(r_n, np.minimum(g_n, b_n))
+        delta = cmax - cmin
+
+        h_chan = np.zeros_like(cmax)
+        mask_r = (cmax == r_n) & (delta != 0)
+        mask_g = (cmax == g_n) & (delta != 0)
+        mask_b = (cmax == b_n) & (delta != 0)
+        h_chan[mask_r] = (((g_n[mask_r] - b_n[mask_r]) / delta[mask_r]) % 6) * 60
+        h_chan[mask_g] = (((b_n[mask_g] - r_n[mask_g]) / delta[mask_g]) + 2) * 60
+        h_chan[mask_b] = (((r_n[mask_b] - g_n[mask_b]) / delta[mask_b]) + 4) * 60
+
+        is_sand_ground = (r > 90) & (g > 60) & (b > 35) & (r > b * 1.05) & (h_chan >= 10) & (h_chan <= 55) & (y_norm > 0.35)
+        clean_bool[is_sand_ground] = False
+    
+    # 2. Filtro por Saliencia del Suelo:
     saliency_cutoff = 0.15 + (ground_sensitivity * 0.25)
     lower_region = (y_norm > 0.4)
     
-    # Identificar candidato a suelo por falta de saliencia de objeto en la zona inferior
     ground_by_saliency = lower_region & (salient_norm < saliency_cutoff) & (depth_norm >= 0.2)
     clean_bool[ground_by_saliency] = False
     
-    # 2. Filtro de Conexión a la Borde Inferior (Suelo Continuo)
-    # Detectar componentes en la máscara que toquen el borde inferior pero no tengan suficiente altura vertical
+    # 3. Filtro de Conexión al Borde Inferior (Suelo Continuo)
     labeled_mask = label(clean_bool)
     regions = regionprops(labeled_mask)
     
@@ -69,14 +85,11 @@ def remove_ground_plane(
         region_height = max_row - min_row
         region_width = max_col - min_col
         
-        # Si el componente toca el borde inferior (max_row cerca del final)
         touches_bottom = (max_row >= height - int(height * 0.03))
         aspect_ratio = region_width / max(1, region_height)
         
-        # Si el componente toca la base y es plano/ancho (aspect ratio alto) o de poca altura relativa
         is_flat_ground = touches_bottom and (aspect_ratio > (2.5 - ground_sensitivity) or region_height < height * 0.25)
         
-        # O si el centroide del componente está muy abajo y tiene baja saliencia promedio
         region_mask = (labeled_mask == region.label)
         avg_saliency = np.mean(salient_norm[region_mask])
         
@@ -133,12 +146,13 @@ def segment_foreground_tree(
     else:
         combined_bool = depth_mask.copy()
         
-    # 4. EXCLUSIÓN DE SUELO / TERRENO (NUEVA FUNCIONALIDAD)
+    # 4. EXCLUSIÓN DE SUELO / TERRENO (NUEVA FUNCIONALIDAD MEJORADA)
     if filter_ground:
         combined_bool = remove_ground_plane(
             combined_bool=combined_bool,
             depth_norm=depth_norm,
             salient_alpha=salient_alpha,
+            image=image,
             ground_sensitivity=ground_sensitivity
         )
         
