@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 
 from depth_estimator import estimate_depth
-from tree_segmenter import segment_foreground_tree
+from tree_segmenter import segment_foreground_tree, get_salient_mask
 from utils import create_overlay, extract_cutout, image_to_bytes, create_synthetic_sample_trees
 
 __author__ = "Nacho"
@@ -18,6 +18,10 @@ __author__ = "Nacho"
 @st.cache_data(show_spinner=False)
 def cached_estimate_depth(_img: Image.Image):
     return estimate_depth(_img)
+
+@st.cache_data(show_spinner=False)
+def cached_get_salient_mask(_img: Image.Image):
+    return get_salient_mask(_img)
 
 # Configuración de la página de Streamlit
 st.set_page_config(
@@ -182,10 +186,11 @@ def main():
     if image_input is not None:
         st.subheader("📸 Resultados del Análisis de Planos y Filtrado de Suelo")
         with st.spinner("Ejecutando modelo de estimación de profundidad y filtrado de terreno..."):
-            # 1. Estimación de Profundidad con Caché en Memoria (Instantáneo al mover sliders)
+            # 1. Estimación de Profundidad y Saliencia con Caché en Memoria (Instantáneo al mover sliders)
             depth_norm, depth_colormap = cached_estimate_depth(image_input)
+            salient_alpha = cached_get_salient_mask(image_input)
             
-            # 2. Segmentación del Árbol en Primer Plano y Filtrado de Suelo
+            # 2. Segmentación del Árbol en Primer Plano con Puerta Estricta de Profundidad Física
             binary_mask, stats = segment_foreground_tree(
                 image=image_input,
                 depth_norm=depth_norm,
@@ -194,7 +199,8 @@ def main():
                 morph_kernel_size=morph_kernel,
                 min_area_filter=min_area_filter,
                 filter_ground=filter_ground,
-                ground_sensitivity=ground_sensitivity
+                ground_sensitivity=ground_sensitivity,
+                salient_alpha=salient_alpha
             )
             
             # 3. Generación de Recorte y Overlay

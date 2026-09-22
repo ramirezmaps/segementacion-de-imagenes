@@ -81,14 +81,14 @@ def remove_ground_plane(
         h_chan[mask_g] = (((b_n[mask_g] - r_n[mask_g]) / delta[mask_g]) + 2) * 60
         h_chan[mask_b] = (((r_n[mask_b] - g_n[mask_b]) / delta[mask_b]) + 4) * 60
 
-        is_sand_ground = (r > 90) & (g > 60) & (b > 35) & (r > b * 1.05) & (h_chan >= 10) & (h_chan <= 55) & (y_norm > 0.35)
+        is_sand_ground = (r > 95) & (g > 65) & (b > 35) & (r > b * 1.10) & (h_chan >= 10) & (h_chan <= 55) & (y_norm > 0.45) & (salient_norm < 0.25)
         clean_bool[is_sand_ground] = False
     
     # 2. Filtro por Saliencia del Suelo:
-    saliency_cutoff = 0.15 + (ground_sensitivity * 0.25)
-    lower_region = (y_norm > 0.4)
+    saliency_cutoff = 0.12 + (ground_sensitivity * 0.18)
+    lower_region = (y_norm > 0.50)
     
-    ground_by_saliency = lower_region & (salient_norm < saliency_cutoff) & (depth_norm >= 0.2)
+    ground_by_saliency = lower_region & (salient_norm < saliency_cutoff)
     clean_bool[ground_by_saliency] = False
     
     # 3. Filtro de Conexión al Borde Inferior (Suelo Continuo)
@@ -121,7 +121,8 @@ def segment_foreground_tree(
     morph_kernel_size: int = 5,
     min_area_filter: bool = True,
     filter_ground: bool = True,
-    ground_sensitivity: float = 0.5
+    ground_sensitivity: float = 0.5,
+    salient_alpha: np.ndarray = None
 ) -> tuple[np.ndarray, dict]:
     """
     Genera la máscara del árbol en primer plano combinando profundidad, saliencia y filtrado de suelo.
@@ -135,6 +136,7 @@ def segment_foreground_tree(
         min_area_filter: Elimina componentes aislados diminutos del fondo.
         filter_ground: Activa el filtrado automático de suelo/terreno.
         ground_sensitivity: Sensibilidad de exclusión del suelo (0.0 = desactivado, 1.0 = estricto).
+        salient_alpha: Máscara saliente precargada/en caché (opcional para máxima velocidad).
         
     Retorna:
         binary_mask: Matriz 2D uint8 (255 = Árbol primer plano, 0 = Fondo/Segundo plano/Suelo).
@@ -146,22 +148,44 @@ def segment_foreground_tree(
     depth_mask = (depth_norm >= depth_threshold)
     
     # 2. Máscara por Objetos Salientes (U2-Net)
-    salient_alpha = get_salient_mask(image)
+    if salient_alpha is None:
+        salient_alpha = get_salient_mask(image)
+        
     if salient_alpha.shape != (height, width):
         salient_img = Image.fromarray(salient_alpha).resize((width, height), Image.Resampling.BILINEAR)
         salient_alpha = np.array(salient_img)
         
     salient_bool = (salient_alpha > 30)
     
-    # 3. Fusión Adaptativa
-    if saliency_weight > 0.0:
-        depth_weight = 1.0 - saliency_weight
-        fused_score = (depth_norm * depth_weight) + ((salient_alpha / 255.0) * saliency_weight)
-        combined_bool = (fused_score >= depth_threshold)
+    # 3. Puerta Estricta de Profundidad Física Relativa entre Planos de la Escena
+    salient_norm = salient_alpha / 255.0
+    
+    if image is not None:
+        img_np = np.array(image.convert("RGB"), dtype=np.float32)
+        r, b = img_np[:, :, 0], img_np[:, :, 2]
+        y_indices, _ = np.indices((height, width))
+        y_norm = y_indices / float(height)
+        is_sky = (b > r * 1.02) & (b > 90) & (y_norm < 0.65)
     else:
-        combined_bool = depth_mask.copy()
+        is_sky = np.zeros((height, width), dtype=bool)
         
-    # 4. EXCLUSIÓN DE SUELO / TERRENO (NUEVA FUNCIONALIDAD MEJORADA)
+    non_sky = ~is_sky
+    if np.any(non_sky):
+        scene_depths = depth_norm[non_sky]
+        d_min, d_max = float(scene_depths.min()), float(scene_depths.max())
+        cutoff_depth = d_min + (d_max - d_min) * (depth_threshold * 0.90)
+        depth_gate = (depth_norm >= cutoff_depth) & non_sky
+    else:
+        cutoff_depth = depth_threshold
+        depth_gate = (depth_norm >= depth_threshold)
+        
+    if saliency_weight > 0.0:
+        structure_candidate = (salient_norm > (0.10 - saliency_weight * 0.08))
+        combined_bool = depth_gate & structure_candidate
+    else:
+        combined_bool = depth_gate.copy()
+        
+    # 4. EXCLUSIÓN DE SUELO / TERRENO
     if filter_ground:
         combined_bool = remove_ground_plane(
             combined_bool=combined_bool,
@@ -170,6 +194,7 @@ def segment_foreground_tree(
             image=image,
             ground_sensitivity=ground_sensitivity
         )
+        combined_bool = combined_bool & depth_gate  # Re-enforce strict physical depth gate
         
     # 5. Operaciones Morfológicas con scikit-image
     if morph_kernel_size > 1:
