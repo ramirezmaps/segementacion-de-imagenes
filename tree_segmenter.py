@@ -10,10 +10,9 @@ from rembg import remove
 from skimage.morphology import opening, closing, disk
 from skimage.measure import label, regionprops
 
-def get_salient_mask(image: Image.Image) -> np.ndarray:
+def get_salient_mask(image: Image.Image, max_eval_dim: int = 1024) -> np.ndarray:
     """
-    Obtiene la máscara saliente de la imagen utilizando U2-Net / rembg.
-    U2-Net aísla automáticamente objetos verticales (árboles) y descarta superficies planas como el suelo.
+    Obtiene la máscara saliente de la imagen utilizando U2-Net / rembg de forma ultra rápida.
     
     Retorna:
         salient_mask: Matriz 2D uint8 (0 a 255).
@@ -21,8 +20,24 @@ def get_salient_mask(image: Image.Image) -> np.ndarray:
     if image.mode != "RGB":
         image = image.convert("RGB")
         
-    out_rgba = remove(image)
+    orig_w, orig_h = image.size
+    
+    # Pre-resizing optimizado para inferencia rápida de U2-Net
+    if max(orig_w, orig_h) > max_eval_dim:
+        scale = max_eval_dim / float(max(orig_w, orig_h))
+        eval_w, eval_h = int(orig_w * scale), int(orig_h * scale)
+        eval_img = image.resize((eval_w, eval_h), Image.Resampling.BILINEAR)
+    else:
+        eval_img = image
+        
+    out_rgba = remove(eval_img)
     alpha_channel = np.array(out_rgba)[:, :, 3]
+    
+    # Redimensionar al tamaño nativo de la imagen original
+    if alpha_channel.shape != (orig_h, orig_w):
+        alpha_img = Image.fromarray(alpha_channel).resize((orig_w, orig_h), Image.Resampling.BILINEAR)
+        alpha_channel = np.array(alpha_img)
+        
     return alpha_channel
 
 def remove_ground_plane(

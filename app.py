@@ -15,6 +15,10 @@ from utils import create_overlay, extract_cutout, image_to_bytes, create_synthet
 
 __author__ = "Nacho"
 
+@st.cache_data(show_spinner=False)
+def cached_estimate_depth(img: Image.Image):
+    return estimate_depth(img)
+
 # Configuración de la página de Streamlit
 st.set_page_config(
     page_title="Segmentación de Árboles por Profundidad | Desarrollado por Nacho",
@@ -177,10 +181,9 @@ def main():
     # Procesamiento principal si hay imagen cargada
     if image_input is not None:
         st.subheader("📸 Resultados del Análisis de Planos y Filtrado de Suelo")
-        
         with st.spinner("Ejecutando modelo de estimación de profundidad y filtrado de terreno..."):
-            # 1. Estimación de Profundidad
-            depth_norm, depth_colormap = estimate_depth(image_input)
+            # 1. Estimación de Profundidad con Caché en Memoria (Instantáneo al mover sliders)
+            depth_norm, depth_colormap = cached_estimate_depth(image_input)
             
             # 2. Segmentación del Árbol en Primer Plano y Filtrado de Suelo
             binary_mask, stats = segment_foreground_tree(

@@ -6,56 +6,67 @@ de cada píxel en la imagen. Usa Matplotlib colormaps para visualizaciones sin d
 
 import numpy as np
 import matplotlib.cm as cm
+import torch
 from PIL import Image
 from transformers import pipeline
+import streamlit as st
 
-_depth_pipeline = None
-
+@st.cache_resource(show_spinner=False)
 def get_depth_pipeline():
     """
-    Carga y mantiene en caché la pipeline de estimación de profundidad.
+    Carga y mantiene en caché la pipeline de estimación de profundidad en memoria.
     """
-    global _depth_pipeline
-    if _depth_pipeline is None:
-        # Usa intel/dpt-hybrid-midas por su equilibrio entre velocidad en CPU y precisión
-        _depth_pipeline = pipeline("depth-estimation", model="intel/dpt-hybrid-midas")
-    return _depth_pipeline
+    return pipeline("depth-estimation", model="intel/dpt-hybrid-midas")
 
-def estimate_depth(image: Image.Image) -> tuple[np.ndarray, Image.Image]:
+
+def estimate_depth(image: Image.Image, max_eval_dim: int = 1024) -> tuple[np.ndarray, Image.Image]:
     """
-    Estima la profundidad relativa de una imagen dada.
+    Estima la profundidad relativa de una imagen dada con máxima velocidad de ejecución.
     
     Parámetros:
         image: Imagen PIL de entrada.
+        max_eval_dim: Dimensión máxima para la evaluación del modelo IA (preserva resolución nativa al exportar).
         
     Retorna:
         depth_norm: Matriz NumPy 2D float32 normalizada en rango [0.0, 1.0].
-                    1.0 representa el plano más cercano (primer plano),
-                    0.0 representa el plano más lejano (segundo plano/fondo).
         colormap_img: Imagen PIL con la visualización en mapa de calor (Inferno).
     """
     if image.mode != "RGB":
         image = image.convert("RGB")
         
+    orig_w, orig_h = image.size
+    
+    # 1. Pre-resizing optimizado para inferencia ultra rápida en CPU/GPU
+    if max(orig_w, orig_h) > max_eval_dim:
+        scale = max_eval_dim / float(max(orig_w, orig_h))
+        eval_w, eval_h = int(orig_w * scale), int(orig_h * scale)
+        eval_img = image.resize((eval_w, eval_h), Image.Resampling.BILINEAR)
+    else:
+        eval_img = image
+        
     pipe = get_depth_pipeline()
-    result = pipe(image)
+    
+    # Inferencia sin cálculo de gradientes (Torch no_grad para máxima velocidad)
+    with torch.no_grad():
+        result = pipe(eval_img)
+        
     depth_map_pil = result["depth"]
     
-    # Redimensionar al tamaño original de la imagen si difiere
-    if depth_map_pil.size != image.size:
-        depth_map_pil = depth_map_pil.resize(image.size, Image.Resampling.BILINEAR)
+    # Redimensionar al tamaño nativo exacto de la imagen original
+    if depth_map_pil.size != (orig_w, orig_h):
+        depth_map_pil = depth_map_pil.resize((orig_w, orig_h), Image.Resampling.BILINEAR)
         
     depth_array = np.array(depth_map_pil, dtype=np.float32)
     
-    # Normalizar entre 0.0 y 1.0 (1.0 = cercano / primer plano)
+    # Normalización min-max [0.0, 1.0] (1.0 = cercano / primer plano)
     d_min, d_max = depth_array.min(), depth_array.max()
     if d_max > d_min:
         depth_norm = (depth_array - d_min) / (d_max - d_min)
     else:
         depth_norm = np.zeros_like(depth_array, dtype=np.float32)
         
-    # Crear colormap visual con Matplotlib Inferno (Amarillo/Rojo = Cercano, Morado/Oscuro = Lejano)
-    colormap_rgba = cm.inferno(depth_norm) # Retorna rango [0.0, 1.0] (H, W, 4)
+    # Mapa de calor colormap Matplotlib Inferno
+    colormap_rgba = cm.inferno(depth_norm)
     colormap_rgb = (colormap_rgba[:, :, :3] * 255).astype(np.uint8)
     colormap_img = Image.fromarray(colormap_rgb)
     
