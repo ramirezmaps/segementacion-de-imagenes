@@ -16,8 +16,8 @@ from utils import create_overlay, extract_cutout, image_to_bytes, create_synthet
 __author__ = "Nacho"
 
 @st.cache_data(show_spinner=False)
-def cached_estimate_depth(img: Image.Image):
-    return estimate_depth(img)
+def cached_estimate_depth(_img: Image.Image):
+    return estimate_depth(_img)
 
 # Configuración de la página de Streamlit
 st.set_page_config(
