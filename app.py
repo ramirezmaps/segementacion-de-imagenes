@@ -16,6 +16,18 @@ from utils import create_overlay, extract_cutout, image_to_bytes, create_synthet
 __author__ = "Nacho"
 
 @st.cache_data(show_spinner=False)
+def get_preview_image(_img: Image.Image, max_dim: int = 800) -> Image.Image:
+    """
+    Genera una versión ligera de la imagen para la previsualización interactiva instantánea (<50ms).
+    """
+    w, h = _img.size
+    if max(w, h) > max_dim:
+        scale = max_dim / float(max(w, h))
+        pw, ph = max(1, int(w * scale)), max(1, int(h * scale))
+        return _img.resize((pw, ph), Image.Resampling.BILINEAR)
+    return _img
+
+@st.cache_data(show_spinner=False)
 def cached_estimate_depth(_img: Image.Image, model_name: str = "depth-anything/Depth-Anything-V2-Small-hf"):
     return estimate_depth(_img, model_name=model_name)
 
@@ -192,15 +204,18 @@ def main():
 
     # Procesamiento principal si hay imagen cargada
     if image_input is not None:
+        orig_w, orig_h = image_input.size
+        preview_img = get_preview_image(image_input, max_dim=800)
+        
         st.subheader("📸 Resultados del Análisis de Planos y Filtrado de Suelo")
         with st.spinner("Ejecutando modelo de estimación de profundidad y filtrado de terreno..."):
             # 1. Estimación de Profundidad y Saliencia con Caché en Memoria (Instantáneo al mover sliders)
-            depth_norm, depth_colormap = cached_estimate_depth(image_input, model_name=model_name)
-            salient_alpha = cached_get_salient_mask(image_input)
+            depth_norm, depth_colormap = cached_estimate_depth(preview_img, model_name=model_name)
+            salient_alpha = cached_get_salient_mask(preview_img)
             
-            # 2. Segmentación del Árbol en Primer Plano con Puerta Estricta de Profundidad Física
+            # 2. Segmentación del Árbol en Primer Plano en Tiempo Real (<50ms al mover sliders)
             binary_mask, stats = segment_foreground_tree(
-                image=image_input,
+                image=preview_img,
                 depth_norm=depth_norm,
                 depth_threshold=depth_threshold,
                 saliency_weight=saliency_weight,
@@ -211,15 +226,15 @@ def main():
                 salient_alpha=salient_alpha
             )
             
-            # 3. Generación de Recorte y Overlay
+            # 3. Generación de Recorte y Overlay de Previsualización Ultra Rápida
             mask_pil = Image.fromarray(binary_mask)
-            overlay_img = create_overlay(image_input, binary_mask, color_rgb=overlay_color, alpha=overlay_alpha)
-            cutout_img = extract_cutout(image_input, binary_mask)
+            overlay_img = create_overlay(preview_img, binary_mask, color_rgb=overlay_color, alpha=overlay_alpha)
+            cutout_img = extract_cutout(preview_img, binary_mask)
 
-        # Mostrar métricas resumidas
+        # Mostrar métricas resumidas con la resolución original intacta
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         with col_m1:
-            st.metric("Resolución de la Imagen", f"{stats['width']} x {stats['height']} px")
+            st.metric("Resolución de la Imagen", f"{orig_w} x {orig_h} px")
         with col_m2:
             st.metric("Cobertura Árbol Primer Plano", f"{stats['fg_percentage']:.2f}%")
         with col_m3:
@@ -234,7 +249,7 @@ def main():
         
         with col1:
             st.markdown("### 1. Imagen Original")
-            st.image(image_input, use_container_width=True)
+            st.image(preview_img, use_container_width=True)
             
         with col2:
             st.markdown("### 2. Mapa de Profundidad")
@@ -253,8 +268,8 @@ def main():
 
         st.markdown("---")
         
-        # Comparación Interactiva y Descargas
-        st.subheader("📥 Exportación y Descargas")
+        # Comparación Interactiva y Descargas en Resolución Nativa Original
+        st.subheader("📥 Exportación y Descargas en Resolución Nativa Original")
         
         col_d1, col_d2, col_d3 = st.columns([1, 1, 1])
         
@@ -264,25 +279,27 @@ def main():
             
         with col_d2:
             st.markdown("#### Descargar Máscara Binaria")
-            mask_bytes = image_to_bytes(mask_pil, format="PNG")
+            full_mask_pil = mask_pil.resize((orig_w, orig_h), Image.Resampling.NEAREST)
+            mask_bytes = image_to_bytes(full_mask_pil, format="PNG")
             st.download_button(
-                label="⬇️ Descargar Máscara (PNG 8-bit)",
+                label=f"⬇️ Descargar Máscara ({orig_w}x{orig_h} px)",
                 data=mask_bytes,
                 file_name="mascara_arbol_sin_suelo.png",
                 mime="image/png"
             )
-            st.info("Formato PNG monocromático con el suelo y fondo filtrados.")
+            st.info(f"Formato PNG monocromático original ({orig_w}x{orig_h} px) con suelo filtrado.")
             
         with col_d3:
             st.markdown("#### Descargar Árbol Aislado")
-            cutout_bytes = image_to_bytes(cutout_img, format="PNG")
+            full_cutout_img = extract_cutout(image_input, np.array(full_mask_pil))
+            cutout_bytes = image_to_bytes(full_cutout_img, format="PNG")
             st.download_button(
-                label="⬇️ Descargar Recorte (PNG RGBA)",
+                label=f"⬇️ Descargar Recorte ({orig_w}x{orig_h} px)",
                 data=cutout_bytes,
                 file_name="arbol_primer_plano_sin_suelo.png",
                 mime="image/png"
             )
-            st.info("Imagen PNG con canal alfa transparente lista para composiciones.")
+            st.info(f"Imagen PNG RGBA transparente original ({orig_w}x{orig_h} px) lista para composiciones.")
 
     else:
         st.info("👆 Por favor, sube una imagen de un árbol desde el panel izquierdo o selecciona una de las muestras sintéticas para comenzar.")
