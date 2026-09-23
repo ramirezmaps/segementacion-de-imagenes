@@ -157,7 +157,7 @@ def segment_foreground_tree(
         
     salient_bool = (salient_alpha > 30)
     
-    # 3. Puerta Estricta de Profundidad Física Relativa entre Planos de la Escena
+    # 3. Puerta Estricta de Profundidad Física con Calibración Dinámica
     salient_norm = salient_alpha / 255.0
     
     if image is not None:
@@ -170,15 +170,9 @@ def segment_foreground_tree(
         is_sky = np.zeros((height, width), dtype=bool)
         
     non_sky = ~is_sky
-    if np.any(non_sky):
-        scene_depths = depth_norm[non_sky]
-        d_min, d_max = float(scene_depths.min()), float(scene_depths.max())
-        cutoff_depth = d_min + (d_max - d_min) * (depth_threshold * 0.90)
-        depth_gate = (depth_norm >= cutoff_depth) & non_sky
-    else:
-        cutoff_depth = depth_threshold
-        depth_gate = (depth_norm >= depth_threshold)
-        
+    cutoff_depth = depth_threshold * 0.45
+    depth_gate = (depth_norm >= cutoff_depth) & non_sky
+    
     if saliency_weight > 0.0:
         structure_candidate = (salient_norm > (0.10 - saliency_weight * 0.08))
         combined_bool = depth_gate & structure_candidate

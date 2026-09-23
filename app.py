@@ -109,7 +109,7 @@ def main():
         "Corte de Profundidad (Primer Plano vs Segundo Plano):",
         min_value=0.0,
         max_value=1.0,
-        value=0.45,
+        value=0.25,
         step=0.02,
         help="Valores más altos aíslan únicamente los objetos más cercanos a la cámara. Valores más bajos incluyen planos más lejanos."
     )
