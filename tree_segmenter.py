@@ -60,6 +60,14 @@ def remove_ground_plane(
     height, width = combined_bool.shape
     clean_bool = combined_bool.copy()
     
+    # Asegurar dimensiones exactas de imagen y saliencia
+    if image is not None and image.size != (width, height):
+        image = image.resize((width, height), Image.Resampling.BILINEAR)
+        
+    if salient_alpha.shape != (height, width):
+        salient_img = Image.fromarray(salient_alpha).resize((width, height), Image.Resampling.BILINEAR)
+        salient_alpha = np.array(salient_img)
+        
     salient_norm = salient_alpha / 255.0
     y_indices, _ = np.indices((height, width))
     y_norm = y_indices / float(height) # 0.0 arriba, 1.0 en la base
@@ -144,6 +152,10 @@ def segment_foreground_tree(
     """
     height, width = depth_norm.shape
     
+    # Asegurar alineación de dimensiones de la imagen de entrada con el mapa de profundidad
+    if image is not None and image.size != (width, height):
+        image = image.resize((width, height), Image.Resampling.BILINEAR)
+        
     # 1. Máscara por Umbral de Profundidad (Primer Plano)
     depth_mask = (depth_norm >= depth_threshold)
     
