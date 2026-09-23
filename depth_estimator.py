@@ -12,19 +12,24 @@ from transformers import pipeline
 import streamlit as st
 
 @st.cache_resource(show_spinner=False)
-def get_depth_pipeline():
+def get_depth_pipeline(model_name: str = "depth-anything/Depth-Anything-V2-Small-hf"):
     """
     Carga y mantiene en caché la pipeline de estimación de profundidad en memoria.
     """
-    return pipeline("depth-estimation", model="intel/dpt-hybrid-midas")
+    return pipeline("depth-estimation", model=model_name)
 
 
-def estimate_depth(image: Image.Image, max_eval_dim: int = 1024) -> tuple[np.ndarray, Image.Image]:
+def estimate_depth(
+    image: Image.Image,
+    model_name: str = "depth-anything/Depth-Anything-V2-Small-hf",
+    max_eval_dim: int = 640
+) -> tuple[np.ndarray, Image.Image]:
     """
     Estima la profundidad relativa de una imagen dada con máxima velocidad de ejecución.
     
     Parámetros:
         image: Imagen PIL de entrada.
+        model_name: Nombre del modelo en Hugging Face Hub (default: depth-anything/Depth-Anything-V2-Small-hf).
         max_eval_dim: Dimensión máxima para la evaluación del modelo IA (preserva resolución nativa al exportar).
         
     Retorna:
@@ -44,7 +49,7 @@ def estimate_depth(image: Image.Image, max_eval_dim: int = 1024) -> tuple[np.nda
     else:
         eval_img = image
         
-    pipe = get_depth_pipeline()
+    pipe = get_depth_pipeline(model_name)
     
     # Inferencia sin cálculo de gradientes (Torch no_grad para máxima velocidad)
     with torch.no_grad():

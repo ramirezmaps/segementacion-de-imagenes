@@ -16,8 +16,8 @@ from utils import create_overlay, extract_cutout, image_to_bytes, create_synthet
 __author__ = "Nacho"
 
 @st.cache_data(show_spinner=False)
-def cached_estimate_depth(_img: Image.Image):
-    return estimate_depth(_img)
+def cached_estimate_depth(_img: Image.Image, model_name: str = "depth-anything/Depth-Anything-V2-Small-hf"):
+    return estimate_depth(_img, model_name=model_name)
 
 @st.cache_data(show_spinner=False)
 def cached_get_salient_mask(_img: Image.Image):
@@ -105,6 +105,14 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.header("🎛️ Ajuste de Planos y Profundidad")
     
+    depth_model_choice = st.sidebar.selectbox(
+        "Modelo de Profundidad IA:",
+        ["Depth Anything V2 Small (Ultra Rápido)", "DPT-Hybrid MiDaS (Clásico)"],
+        index=0,
+        help="Depth Anything V2 ofrece mayor precisión de bordes y una velocidad >2x superior en CPU."
+    )
+    model_name = "depth-anything/Depth-Anything-V2-Small-hf" if "Depth Anything" in depth_model_choice else "intel/dpt-hybrid-midas"
+
     depth_threshold = st.sidebar.slider(
         "Corte de Profundidad (Primer Plano vs Segundo Plano):",
         min_value=0.0,
@@ -187,7 +195,7 @@ def main():
         st.subheader("📸 Resultados del Análisis de Planos y Filtrado de Suelo")
         with st.spinner("Ejecutando modelo de estimación de profundidad y filtrado de terreno..."):
             # 1. Estimación de Profundidad y Saliencia con Caché en Memoria (Instantáneo al mover sliders)
-            depth_norm, depth_colormap = cached_estimate_depth(image_input)
+            depth_norm, depth_colormap = cached_estimate_depth(image_input, model_name=model_name)
             salient_alpha = cached_get_salient_mask(image_input)
             
             # 2. Segmentación del Árbol en Primer Plano con Puerta Estricta de Profundidad Física
